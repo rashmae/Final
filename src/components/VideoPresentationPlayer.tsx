@@ -6,7 +6,7 @@ import {
   ChevronRight, ArrowRight, ShieldCheck, Ship, Anchor,
   Video, Printer, Check, Sparkles, TrendingUp, BarChart3, Sliders, Cpu,
   Award, Compass, Activity, Brain, UserCheck, Terminal, AlertTriangle,
-  Calendar, Zap, Waves, HelpCircle
+  Calendar, Zap, Waves, HelpCircle, Tv, Monitor
 } from 'lucide-react';
 import { KEYNOTE_BEATS, KeynoteBeat, TOTAL_KEYNOTE_SECONDS } from '../data/presentationSlides';
 import { FULL_TIME_SERIES, BaselineModelChoice, GROUP_INFO, VALIDATION_METRICS } from '../data/forecastingData';
@@ -55,6 +55,35 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
   const [mouseActive, setMouseActive] = useState<boolean>(true);
   const [videoNotification, setVideoNotification] = useState<string | null>(null);
   const [beat1SelectedComponent, setBeat1SelectedComponent] = useState<'all' | 'trend' | 'seasonality' | 'cyclicality' | 'randomness' | null>(null);
+
+  // TV / Big Screen presentation mode (Auto-detect wide display / TV resolution or user toggle)
+  const [isTVMode, setIsTVMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1500 || window.innerHeight >= 900;
+    }
+    return false;
+  });
+
+  // Mobile phone screen detection for adaptive layouts
+  const [isPhoneScreen, setIsPhoneScreen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 640;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      const isMobile = window.innerWidth < 640;
+      setIsPhoneScreen(isMobile);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Touch swipe support for mobile phone setup
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mouseTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -124,15 +153,32 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
     }
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = async () => {
     if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+        setIsFullscreen(true);
+        if (window.innerWidth >= 1300 || window.innerHeight >= 800) {
+          setIsTVMode(true);
+        }
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch {
+      // Fallback for browsers or devices without standard fullscreen API
+      setIsFullscreen((prev) => !prev);
     }
+  };
+
+  const toggleTVMode = () => {
+    setIsTVMode((prev) => {
+      const next = !prev;
+      setVideoNotification(next ? '📺 TV Mode: Large Stage & Enhanced Visibility' : 'Standard Display Mode');
+      setTimeout(() => setVideoNotification(null), 2500);
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -149,7 +195,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
     setBeatElapsedSeconds(0);
   };
 
-  // Keyboard Shortcuts (Space, Arrows, F, C, P, V, S)
+  // Keyboard Shortcuts (Space, Arrows, F, T, C, P, V, S)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -165,6 +211,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
       } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         toggleFullscreen();
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        toggleTVMode();
       } else if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
         setShowPresenterHUD((prev) => !prev);
@@ -190,6 +239,32 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
     mouseTimerRef.current = setTimeout(() => {
       if (isPlaying) setMouseActive(false);
     }, 2800);
+  };
+
+  // Touch swipe support for mobile phone setup
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+    setMouseActive(true);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const diffX = e.changedTouches[0].clientX - touchStartXRef.current;
+    const diffY = e.changedTouches[0].clientY - touchStartYRef.current;
+    
+    // Horizontal swipe threshold: 45px
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 45) {
+      if (diffX < 0) {
+        // Swiped left -> next beat
+        skipToBeat(Math.min(KEYNOTE_BEATS.length - 1, currentBeatIndex + 1));
+      } else {
+        // Swiped right -> prev beat
+        skipToBeat(Math.max(0, currentBeatIndex - 1));
+      }
+    }
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
   };
 
   // Export Handlers
@@ -679,9 +754,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
       <div
         ref={containerRef}
         onMouseMove={handleMouseMove}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
         className={`relative w-full h-full bg-[#060B14] overflow-hidden select-none flex items-center justify-center transition-all ${
           isFullscreen ? '!fixed !inset-0 !z-50 !w-screen !h-screen !max-w-none !rounded-none !border-none !aspect-auto bg-[#060B14]' : ''
-        }`}
+        } ${isTVMode ? 'stage-tv-mode' : ''}`}
       >
         {/* Subtle radial depth gradient in Apple keynote stage style */}
         <div 
@@ -691,6 +768,33 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
           }}
         />
 
+        {/* Top-Right Quick Action Toolbar (TV Mode & Fullscreen, 1-Click for TV & Mobile) */}
+        <div className="absolute top-3 right-3 sm:top-4 sm:right-6 z-50 flex items-center gap-2 pointer-events-auto">
+          {/* Quick TV Mode Switcher */}
+          <button
+            onClick={toggleTVMode}
+            className={`flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full border text-[11px] sm:text-xs font-mono font-bold transition-all shadow-xl backdrop-blur-md ${
+              isTVMode
+                ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-[0_0_20px_rgba(242,165,65,0.6)]'
+                : 'bg-slate-900/85 text-slate-300 border-slate-700/80 hover:bg-slate-800 hover:text-white'
+            }`}
+            title="Toggle TV / Big Screen Presentation Mode (Press T)"
+          >
+            <Tv className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-current" />
+            <span className="hidden sm:inline">{isTVMode ? 'TV Stage: ACTIVE' : 'TV Mode'}</span>
+            <span className="sm:hidden">{isTVMode ? 'TV: ON' : 'TV'}</span>
+          </button>
+
+          {/* Quick Fullscreen Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 sm:p-2 rounded-full bg-slate-900/85 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 shadow-xl backdrop-blur-md transition-colors"
+            title="Toggle Fullscreen (Press F)"
+          >
+            {isFullscreen ? <Minimize className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+          </button>
+        </div>
+
         {/* Floating Notification Toast */}
         <AnimatePresence>
           {videoNotification && (
@@ -698,7 +802,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="absolute top-6 right-6 z-50 px-4 py-2 bg-emerald-950/90 border border-emerald-500 text-emerald-200 text-xs font-semibold rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md"
+              className="absolute top-14 sm:top-16 right-3 sm:right-6 z-50 px-4 py-2 bg-emerald-950/90 border border-emerald-500 text-emerald-200 text-xs font-semibold rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md"
             >
               <Check className="w-4 h-4 text-emerald-400" />
               <span>{videoNotification}</span>
@@ -715,7 +819,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
         {/* BEAT 0 (0:00 - 0:25 · 25s): THE HOOK — TITLE AND STUDY CONTEXT */}
         {/* ============================================================== */}
         {currentBeatIndex === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center p-4 sm:p-8 md:p-12 overflow-hidden">
+          <div className="absolute inset-0 flex items-center justify-center p-3 sm:p-6 md:p-10 overflow-y-auto sm:overflow-hidden pb-24 sm:pb-20 phone-scrollable">
             {/* Cinematic Port Terminal Backdrop */}
             <div className="absolute inset-0 overflow-hidden">
               <img
@@ -744,25 +848,25 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
               <path d="M 100 250 C 250 250, 350 380, 500 380 C 650 380, 750 250, 900 250" fill="none" stroke="#38BDF8" strokeWidth="1.5" strokeDasharray="6 6" />
             </svg>
 
-            <div className="relative z-20 flex flex-col items-center max-w-5xl w-full text-center gap-5 sm:gap-6">
+            <div className={`relative z-20 flex flex-col items-center ${isTVMode ? 'max-w-[94vw]' : 'max-w-5xl'} w-full text-center gap-3 sm:gap-5 md:gap-6 my-auto`}>
               {/* Institutional & Title Header */}
               <motion.div
                 initial={{ opacity: 0, y: -15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8 }}
-                className="space-y-2.5"
+                className="space-y-1.5 sm:space-y-2.5"
               >
-                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-mono font-bold uppercase tracking-widest shadow-[0_0_20px_rgba(242,165,65,0.25)]">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs sm:text-sm font-mono font-bold uppercase tracking-widest shadow-[0_0_20px_rgba(242,165,65,0.25)]">
                   <span className="w-2 h-2 rounded-full bg-[#F2A541]" />
                   <span>APPLIED STUDY 1</span>
                 </div>
-                <h1 className="text-3xl sm:text-4xl md:text-5xl font-light text-white tracking-tight">
+                <h1 className={`font-light text-white tracking-tight ${isTVMode ? 'text-3xl sm:text-5xl md:text-6xl 2xl:text-7xl' : 'text-2xl sm:text-3xl md:text-5xl'}`}>
                   Real-Data Forecasting Decision Challenge
                 </h1>
-                <div className="text-xs sm:text-sm font-mono text-slate-400 font-medium">
+                <div className={`font-mono text-slate-300 font-medium ${isTVMode ? 'text-sm sm:text-lg 2xl:text-2xl' : 'text-xs sm:text-sm'}`}>
                   IE-PC 3112: Operations Management 1
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm font-mono text-slate-300 pt-1">
+                <div className={`flex flex-wrap items-center justify-center gap-2 sm:gap-3 font-mono text-slate-300 pt-1 ${isTVMode ? 'text-sm sm:text-base 2xl:text-xl' : 'text-[11px] sm:text-xs'}`}>
                   <span className="px-2.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/40 text-sky-400 font-semibold">BSIE 3-E</span>
                   <span className="text-slate-600 hidden sm:inline">|</span>
                   <span className="px-2.5 py-0.5 rounded bg-slate-900/80 border border-slate-700/70 text-slate-200">Cebu Technological University, Main Campus</span>
@@ -771,49 +875,55 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 </div>
               </motion.div>
 
-              {/* 3 Speakers Roster (Clean Names Only) */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 w-full max-w-4xl">
+              {/* 3 Speakers Roster (Clean Names Only - 3 Columns on both Mobile & Desktop) */}
+              <div className={`grid grid-cols-3 gap-2 sm:gap-3.5 w-full ${isTVMode ? 'max-w-[90vw]' : 'max-w-4xl'}`}>
                 {/* Speaker 1 */}
-                <div className="p-4 rounded-2xl border bg-slate-950/60 border-sky-400/40 shadow-[0_0_20px_rgba(56,189,248,0.15)] text-center backdrop-blur-md transition-all hover:border-sky-400">
-                  <div className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-400/30 text-[11px] font-mono text-sky-400 font-bold uppercase tracking-wider">
+                <div className="p-2.5 sm:p-4 rounded-2xl border bg-slate-950/70 border-sky-400/40 shadow-[0_0_20px_rgba(56,189,248,0.15)] text-center backdrop-blur-md transition-all hover:border-sky-400">
+                  <div className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-400/30 font-mono text-sky-400 font-bold uppercase tracking-wider ${isTVMode ? 'text-xs sm:text-sm' : 'text-[10px] sm:text-[11px]'}`}>
                     Speaker 1
                   </div>
-                  <div className="text-lg font-bold text-white mt-2 tracking-wide">Elaiza Jane Aligato</div>
+                  <div className={`font-bold text-white mt-1.5 sm:mt-2 tracking-wide ${isTVMode ? 'text-base sm:text-xl md:text-2xl 2xl:text-3xl' : 'text-xs sm:text-base md:text-lg'}`}>
+                    Elaiza Jane Aligato
+                  </div>
                 </div>
 
                 {/* Speaker 2 */}
-                <div className="p-4 rounded-2xl border bg-slate-950/60 border-amber-400/40 shadow-[0_0_20px_rgba(242,165,65,0.15)] text-center backdrop-blur-md transition-all hover:border-amber-400">
-                  <div className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 text-[11px] font-mono text-[#F2A541] font-bold uppercase tracking-wider">
+                <div className="p-2.5 sm:p-4 rounded-2xl border bg-slate-950/70 border-amber-400/40 shadow-[0_0_20px_rgba(242,165,65,0.15)] text-center backdrop-blur-md transition-all hover:border-amber-400">
+                  <div className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 font-mono text-[#F2A541] font-bold uppercase tracking-wider ${isTVMode ? 'text-xs sm:text-sm' : 'text-[10px] sm:text-[11px]'}`}>
                     Speaker 2
                   </div>
-                  <div className="text-lg font-bold text-white mt-2 tracking-wide">Rash Mae Crystelle C. Ansay</div>
+                  <div className={`font-bold text-white mt-1.5 sm:mt-2 tracking-wide ${isTVMode ? 'text-base sm:text-xl md:text-2xl 2xl:text-3xl' : 'text-xs sm:text-base md:text-lg'}`}>
+                    Rash Mae Crystelle C. Ansay
+                  </div>
                 </div>
 
                 {/* Speaker 3 */}
-                <div className="p-4 rounded-2xl border bg-slate-950/60 border-emerald-400/40 shadow-[0_0_20px_rgba(16,185,129,0.15)] text-center backdrop-blur-md transition-all hover:border-emerald-400">
-                  <div className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-[11px] font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                <div className="p-2.5 sm:p-4 rounded-2xl border bg-slate-950/70 border-emerald-400/40 shadow-[0_0_20px_rgba(16,185,129,0.15)] text-center backdrop-blur-md transition-all hover:border-emerald-400">
+                  <div className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 font-mono text-emerald-400 font-bold uppercase tracking-wider ${isTVMode ? 'text-xs sm:text-sm' : 'text-[10px] sm:text-[11px]'}`}>
                     Speaker 3
                   </div>
-                  <div className="text-lg font-bold text-white mt-2 tracking-wide">Mylene Joy Villagracia</div>
+                  <div className={`font-bold text-white mt-1.5 sm:mt-2 tracking-wide ${isTVMode ? 'text-base sm:text-xl md:text-2xl 2xl:text-3xl' : 'text-xs sm:text-base md:text-lg'}`}>
+                    Mylene Joy Villagracia
+                  </div>
                 </div>
               </div>
 
               {/* Dataset Scope Card */}
-              <div className="w-full max-w-4xl p-4 sm:p-5 rounded-2xl bg-slate-950/65 border border-slate-700/80 shadow-xl backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
+              <div className={`w-full ${isTVMode ? 'max-w-[90vw] p-4 sm:p-6' : 'max-w-4xl p-3 sm:p-5'} rounded-2xl bg-slate-950/75 border border-slate-700/80 shadow-xl backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 text-left`}>
                 <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl bg-[#1B6CA8]/30 border border-sky-400/30 text-sky-400">
-                    <Ship className="w-5 h-5" />
+                  <div className="p-2 sm:p-2.5 rounded-xl bg-[#1B6CA8]/30 border border-sky-400/30 text-sky-400">
+                    <Ship className="w-4 h-4 sm:w-5 sm:h-5" />
                   </div>
                   <div>
-                    <div className="text-xs font-mono text-[#F2A541] uppercase tracking-wider font-bold">
+                    <div className={`font-mono text-[#F2A541] uppercase tracking-wider font-bold ${isTVMode ? 'text-xs sm:text-base' : 'text-[11px] sm:text-xs'}`}>
                       DATASET D10 · PORT OF LOS ANGELES (POLA) EXPORTS
                     </div>
-                    <div className="text-xs text-slate-300">
+                    <div className={`text-slate-300 ${isTVMode ? 'text-xs sm:text-sm md:text-base' : 'text-[11px] sm:text-xs'}`}>
                       36 Historical Monthly Observations (Jan 2022 – Dec 2024) · Twenty-Foot Equivalent Units (TEUs)
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-400 border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-4">
+                <div className={`flex items-center gap-2 font-mono text-slate-300 border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-4 ${isTVMode ? 'text-xs sm:text-sm md:text-base' : 'text-[11px] sm:text-xs'}`}>
                   <span className="text-sky-300 font-semibold">30 Dev Months</span>
                   <span>·</span>
                   <span className="text-amber-300 font-semibold">6 Holdout Months</span>
@@ -934,10 +1044,10 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 className="absolute inset-0 flex flex-col items-center justify-center p-4 md:p-8 z-10"
               >
                 {/* Top Decomposition Interactive Header & Component Selector */}
-                <div className="w-full max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-2.5 mb-2 px-2 text-xs font-mono">
+                <div className={`w-full ${isTVMode ? 'max-w-[95vw]' : 'max-w-5xl'} flex flex-col sm:flex-row items-center justify-between gap-2.5 mb-2 px-2 text-xs font-mono`}>
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping" />
-                    <span className="text-slate-200 font-bold tracking-wide uppercase">
+                    <span className={`text-slate-200 font-bold tracking-wide uppercase ${isTVMode ? 'text-sm sm:text-base' : 'text-xs'}`}>
                       Port of LA Exports (TEUs) · 4 Components
                     </span>
                   </div>
@@ -946,7 +1056,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-slate-950/85 border border-slate-800 backdrop-blur-md shadow-lg">
                     <button
                       onClick={() => setBeat1SelectedComponent(activeBeat1Component === 'all' && beat1SelectedComponent === 'all' ? null : 'all')}
-                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      className={`rounded-lg font-bold transition-all ${isTVMode ? 'px-3 py-1.5 text-xs sm:text-sm' : 'px-2.5 py-1 text-[10px]'} ${
                         activeBeat1Component === 'all'
                           ? 'bg-slate-800 text-white shadow border border-slate-600'
                           : 'text-slate-400 hover:text-white'
@@ -957,7 +1067,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     <button
                       onClick={() => setBeat1SelectedComponent(beat1SelectedComponent === 'trend' ? null : 'trend')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      className={`flex items-center gap-1 rounded-lg font-bold transition-all ${isTVMode ? 'px-3 py-1.5 text-xs sm:text-sm' : 'px-2.5 py-1 text-[10px]'} ${
                         activeBeat1Component === 'trend'
                           ? 'bg-sky-500/25 text-sky-300 border border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.4)]'
                           : 'text-slate-400 hover:text-sky-300'
@@ -969,7 +1079,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     <button
                       onClick={() => setBeat1SelectedComponent(beat1SelectedComponent === 'seasonality' ? null : 'seasonality')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      className={`flex items-center gap-1 rounded-lg font-bold transition-all ${isTVMode ? 'px-3 py-1.5 text-xs sm:text-sm' : 'px-2.5 py-1 text-[10px]'} ${
                         activeBeat1Component === 'seasonality'
                           ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.4)]'
                           : 'text-slate-400 hover:text-emerald-300'
@@ -981,7 +1091,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     <button
                       onClick={() => setBeat1SelectedComponent(beat1SelectedComponent === 'cyclicality' ? null : 'cyclicality')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      className={`flex items-center gap-1 rounded-lg font-bold transition-all ${isTVMode ? 'px-3 py-1.5 text-xs sm:text-sm' : 'px-2.5 py-1 text-[10px]'} ${
                         activeBeat1Component === 'cyclicality'
                           ? 'bg-purple-500/25 text-purple-300 border border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.4)]'
                           : 'text-slate-400 hover:text-purple-300'
@@ -993,7 +1103,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     <button
                       onClick={() => setBeat1SelectedComponent(beat1SelectedComponent === 'randomness' ? null : 'randomness')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      className={`flex items-center gap-1 rounded-lg font-bold transition-all ${isTVMode ? 'px-3 py-1.5 text-xs sm:text-sm' : 'px-2.5 py-1 text-[10px]'} ${
                         activeBeat1Component === 'randomness'
                           ? 'bg-amber-500/25 text-amber-300 border border-amber-400 shadow-[0_0_12px_rgba(242,165,65,0.4)]'
                           : 'text-slate-400 hover:text-amber-300'
@@ -1006,7 +1116,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 </div>
 
                 {/* SVG Graph Container */}
-                <div className={`relative w-full max-w-5xl transition-all duration-500 ${activeBeat1Component === 'trend' ? 'h-[78%] md:h-[84%]' : 'h-[65%] md:h-[70%]'}`}>
+                <div className={`relative w-full ${isTVMode ? 'max-w-[95vw] 2xl:max-w-[96vw]' : 'max-w-5xl'} transition-all duration-500 ${activeBeat1Component === 'trend' ? 'h-[78%] md:h-[84%]' : 'h-[65%] md:h-[70%]'}`}>
                   <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-full overflow-visible">
                     <defs>
                       <linearGradient id="polaAreaGrad" x1="0" y1="0" x2="0" y2="1">
@@ -1106,8 +1216,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           x={padLeft - 10}
                           y={getY(v) + 4}
                           textAnchor="end"
-                          fill="#64748B"
-                          fontSize="10"
+                          fill="#94A3B8"
+                          fontSize={isTVMode ? "15" : "11"}
                           fontFamily="monospace"
                         >
                           {v / 1000}k
@@ -1120,13 +1230,13 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     <line x1={getX(24.5)} y1={padTop} x2={getX(24.5)} y2={padTop + plotH} stroke="#334155" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
 
                     {/* Year Labels at Base of Chart */}
-                    <text x={getX(6.5)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                    <text x={getX(6.5)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "15" : "11"} fontFamily="monospace" fontWeight="bold">
                       2022 (Months 1–12)
                     </text>
-                    <text x={getX(18.5)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                    <text x={getX(18.5)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "15" : "11"} fontFamily="monospace" fontWeight="bold">
                       2023 (Months 13–24)
                     </text>
-                    <text x={getX(30.5)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                    <text x={getX(30.5)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "15" : "11"} fontFamily="monospace" fontWeight="bold">
                       2024 (Months 25–36)
                     </text>
 
@@ -1651,15 +1761,15 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
             {/* 4-Panel Grid: Stationary, Perfectly Aligned 2x2 Matrix (Periods 1-30 only) */}
             {activeConventionalView === 'grid' && (
-              <div className="relative z-10 w-full h-full max-w-6xl max-h-[78vh] grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <div className={`relative z-10 w-full h-full ${isTVMode ? 'max-w-[96vw] 2xl:max-w-[96vw] max-h-[85vh] gap-3 sm:gap-5' : 'max-w-6xl max-h-[78vh] gap-2.5 sm:gap-4'} grid grid-cols-1 sm:grid-cols-2`}>
               
               {/* TOP LEFT: SMA */}
               <div
-                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-3 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
+                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-2.5 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
               >
                 <div className="flex items-center justify-between mb-1 px-1 z-10">
-                  <h3 className="text-lg sm:text-2xl font-light tracking-wider text-slate-100">SMA</h3>
-                  <span className="text-xs font-mono text-sky-400">MAE: 33,428</span>
+                  <h3 className={`font-light tracking-wider text-slate-100 ${isTVMode ? 'text-2xl sm:text-3xl 2xl:text-4xl' : 'text-lg sm:text-2xl'}`}>SMA</h3>
+                  <span className={`font-mono text-sky-400 ${isTVMode ? 'text-sm sm:text-base 2xl:text-lg font-bold' : 'text-xs'}`}>MAE: 33,428</span>
                 </div>
                 <div className="flex-1 relative w-full h-full min-h-0">
                   <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-full overflow-visible">
@@ -1684,36 +1794,36 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     {[250000, 350000, 450000].map(v => (
                       <g key={v}>
                         <line x1={padLeft} y1={getY(v)} x2={padLeft + plotW} y2={getY(v)} stroke="#334155" strokeDasharray="4 4" strokeOpacity="0.6" />
-                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace" fontWeight="500">
+                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "17" : "14"} fontFamily="monospace" fontWeight="500">
                           {v / 1000}k
                         </text>
                       </g>
                     ))}
 
                     {/* Y-Axis Line & X-Axis Baseline */}
-                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="monospace">
+                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">
                       TEUs
                     </text>
 
                     {/* Mini Legend */}
                     <g transform={`translate(${padLeft + plotW - 130}, ${padTop - 8})`}>
-                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth="2" strokeDasharray="3 2" />
-                      <text x="22" y="3" fill="#94A3B8" fontSize="9" fontFamily="monospace">Actual</text>
-                      <line x1="68" y1="0" x2="84" y2="0" stroke="#38BDF8" strokeWidth="2.5" />
-                      <text x="90" y="3" fill="#38BDF8" fontSize="9" fontFamily="monospace">SMA</text>
+                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="3 2" />
+                      <text x="22" y="3" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">Actual</text>
+                      <line x1="68" y1="0" x2="84" y2="0" stroke="#38BDF8" strokeWidth={isTVMode ? "4" : "2.8"} />
+                      <text x="90" y="3" fill="#38BDF8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">SMA</text>
                     </g>
 
                     {/* X Ticks (Periods 1-30) */}
                     {devTicks.map(t => (
-                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="10" fontFamily="monospace">
+                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "16" : "13"} fontFamily="monospace">
                         {t.label}
                       </text>
                     ))}
 
                     {/* Actual Series Reference Aligned to Y-Axis (Periods 1-30) */}
-                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth="2" strokeDasharray="4 3" strokeOpacity="0.85" />
+                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="4 3" strokeOpacity="0.85" />
 
                     {/* Shaded Area */}
                     <path
@@ -1727,7 +1837,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devSmaPoints)}
                       fill="none"
                       stroke="#0284C7"
-                      strokeWidth="6"
+                      strokeWidth={isTVMode ? "10" : "7"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity="0.35"
@@ -1743,7 +1853,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devSmaPoints)}
                       fill="none"
                       stroke="#38BDF8"
-                      strokeWidth="2.5"
+                      strokeWidth={isTVMode ? "4.5" : "3.2"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -1755,8 +1865,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     {/* Steady Head Beacon */}
                     <g transform={`translate(${gridHeadSma.x}, ${gridHeadSma.y})`}>
-                      <circle r="5" fill="#38BDF8" opacity="0.4" />
-                      <circle r="3.5" fill="#38BDF8" />
+                      <circle r={isTVMode ? "7" : "5"} fill="#38BDF8" opacity="0.4" />
+                      <circle r={isTVMode ? "5" : "3.5"} fill="#38BDF8" />
                       <circle r="1.5" fill="#FFFFFF" />
                     </g>
                   </svg>
@@ -1765,11 +1875,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
               {/* TOP RIGHT: WMA */}
               <div
-                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-3 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
+                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-2.5 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
               >
                 <div className="flex items-center justify-between mb-1 px-1 z-10">
-                  <h3 className="text-lg sm:text-2xl font-light tracking-wider text-slate-100">WMA</h3>
-                  <span className="text-xs font-mono text-emerald-400">MAE: 32,142</span>
+                  <h3 className={`font-light tracking-wider text-slate-100 ${isTVMode ? 'text-2xl sm:text-3xl 2xl:text-4xl' : 'text-lg sm:text-2xl'}`}>WMA</h3>
+                  <span className={`font-mono text-emerald-400 ${isTVMode ? 'text-sm sm:text-base 2xl:text-lg font-bold' : 'text-xs'}`}>MAE: 32,142</span>
                 </div>
                 <div className="flex-1 relative w-full h-full min-h-0">
                   <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-full overflow-visible">
@@ -1794,36 +1904,36 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     {[250000, 350000, 450000].map(v => (
                       <g key={v}>
                         <line x1={padLeft} y1={getY(v)} x2={padLeft + plotW} y2={getY(v)} stroke="#334155" strokeDasharray="4 4" strokeOpacity="0.6" />
-                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace" fontWeight="500">
+                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "17" : "14"} fontFamily="monospace" fontWeight="500">
                           {v / 1000}k
                         </text>
                       </g>
                     ))}
 
                     {/* Y-Axis Line & X-Axis Baseline */}
-                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="monospace">
+                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">
                       TEUs
                     </text>
 
                     {/* Mini Legend */}
                     <g transform={`translate(${padLeft + plotW - 130}, ${padTop - 8})`}>
-                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth="2" strokeDasharray="3 2" />
-                      <text x="22" y="3" fill="#94A3B8" fontSize="9" fontFamily="monospace">Actual</text>
-                      <line x1="68" y1="0" x2="84" y2="0" stroke="#10B981" strokeWidth="2.5" />
-                      <text x="90" y="3" fill="#10B981" fontSize="9" fontFamily="monospace">WMA</text>
+                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="3 2" />
+                      <text x="22" y="3" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">Actual</text>
+                      <line x1="68" y1="0" x2="84" y2="0" stroke="#10B981" strokeWidth={isTVMode ? "4" : "2.8"} />
+                      <text x="90" y="3" fill="#10B981" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">WMA</text>
                     </g>
 
                     {/* X Ticks (Periods 1-30) */}
                     {devTicks.map(t => (
-                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="10" fontFamily="monospace">
+                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "16" : "13"} fontFamily="monospace">
                         {t.label}
                       </text>
                     ))}
 
                     {/* Actual Series Reference Aligned to Y-Axis (Periods 1-30) */}
-                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth="2" strokeDasharray="4 3" strokeOpacity="0.85" />
+                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="4 3" strokeOpacity="0.85" />
 
                     {/* Shaded Area */}
                     <path
@@ -1837,7 +1947,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devWmaPoints)}
                       fill="none"
                       stroke="#059669"
-                      strokeWidth="6"
+                      strokeWidth={isTVMode ? "10" : "7"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity="0.35"
@@ -1853,7 +1963,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devWmaPoints)}
                       fill="none"
                       stroke="#34D399"
-                      strokeWidth="2.5"
+                      strokeWidth={isTVMode ? "4.5" : "3.2"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -1865,8 +1975,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     {/* Steady Head Beacon */}
                     <g transform={`translate(${gridHeadWma.x}, ${gridHeadWma.y})`}>
-                      <circle r="5" fill="#34D399" opacity="0.4" />
-                      <circle r="3.5" fill="#34D399" />
+                      <circle r={isTVMode ? "7" : "5"} fill="#34D399" opacity="0.4" />
+                      <circle r={isTVMode ? "5" : "3.5"} fill="#34D399" />
                       <circle r="1.5" fill="#FFFFFF" />
                     </g>
                   </svg>
@@ -1875,11 +1985,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
               {/* BOTTOM LEFT: ETS (α=0.20, α=0.50, α=0.80) */}
               <div
-                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-3 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
+                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-2.5 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
               >
                 <div className="flex items-center justify-between mb-1 px-1 z-10">
-                  <h3 className="text-lg sm:text-2xl font-light tracking-wider text-slate-100">ETS</h3>
-                  <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs font-mono tracking-wider">
+                  <h3 className={`font-light tracking-wider text-slate-100 ${isTVMode ? 'text-2xl sm:text-3xl 2xl:text-4xl' : 'text-lg sm:text-2xl'}`}>ETS</h3>
+                  <div className={`flex items-center gap-1.5 sm:gap-2.5 font-mono tracking-wider ${isTVMode ? 'text-xs sm:text-sm 2xl:text-base font-bold' : 'text-xs'}`}>
                     <span className="text-sky-300">α0.20: 32k</span>
                     <span className="text-[#F2A541] font-semibold">α0.50: 30,596</span>
                     <span className="text-orange-400">α0.80: 32k</span>
@@ -1908,36 +2018,36 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     {[250000, 350000, 450000].map(v => (
                       <g key={v}>
                         <line x1={padLeft} y1={getY(v)} x2={padLeft + plotW} y2={getY(v)} stroke="#334155" strokeDasharray="4 4" strokeOpacity="0.6" />
-                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace" fontWeight="500">
+                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "17" : "14"} fontFamily="monospace" fontWeight="500">
                           {v / 1000}k
                         </text>
                       </g>
                     ))}
 
                     {/* Y-Axis Line & X-Axis Baseline */}
-                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="monospace">
+                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">
                       TEUs
                     </text>
 
                     {/* Mini Legend */}
                     <g transform={`translate(${padLeft + plotW - 130}, ${padTop - 8})`}>
-                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth="2" strokeDasharray="3 2" />
-                      <text x="22" y="3" fill="#94A3B8" fontSize="9" fontFamily="monospace">Actual</text>
-                      <line x1="68" y1="0" x2="84" y2="0" stroke="#F2A541" strokeWidth="2.5" />
-                      <text x="90" y="3" fill="#F2A541" fontSize="9" fontFamily="monospace">ETS</text>
+                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="3 2" />
+                      <text x="22" y="3" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">Actual</text>
+                      <line x1="68" y1="0" x2="84" y2="0" stroke="#F2A541" strokeWidth={isTVMode ? "4" : "2.8"} />
+                      <text x="90" y="3" fill="#F2A541" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">ETS</text>
                     </g>
 
                     {/* X Ticks (Periods 1-30) */}
                     {devTicks.map(t => (
-                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="10" fontFamily="monospace">
+                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "16" : "13"} fontFamily="monospace">
                         {t.label}
                       </text>
                     ))}
 
                     {/* Actual Series Reference Aligned to Y-Axis (Periods 1-30) */}
-                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth="2" strokeDasharray="4 3" strokeOpacity="0.85" />
+                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="4 3" strokeOpacity="0.85" />
 
                     {/* Shaded Area Underneath α=0.50 Baseline */}
                     <path
@@ -1951,7 +2061,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devEs02Points)}
                       fill="none"
                       stroke="#38BDF8"
-                      strokeWidth="1.8"
+                      strokeWidth={isTVMode ? "2.5" : "1.8"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeOpacity="0.6"
@@ -1966,7 +2076,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devEs08Points)}
                       fill="none"
                       stroke="#FB923C"
-                      strokeWidth="1.8"
+                      strokeWidth={isTVMode ? "2.5" : "1.8"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeOpacity="0.7"
@@ -1981,7 +2091,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devEs05Points)}
                       fill="none"
                       stroke="#F2A541"
-                      strokeWidth="3"
+                      strokeWidth={isTVMode ? "5" : "3.5"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -1993,8 +2103,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     {/* Steady Head Beacon */}
                     <g transform={`translate(${gridHeadEts05.x}, ${gridHeadEts05.y})`}>
-                      <circle r="5" fill="#F2A541" opacity="0.4" />
-                      <circle r="3.5" fill="#F2A541" />
+                      <circle r={isTVMode ? "7" : "5"} fill="#F2A541" opacity="0.4" />
+                      <circle r={isTVMode ? "5" : "3.5"} fill="#F2A541" />
                       <circle r="1.5" fill="#FFFFFF" />
                     </g>
                   </svg>
@@ -2003,11 +2113,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
               {/* BOTTOM RIGHT: SLR */}
               <div
-                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-3 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
+                className="relative flex flex-col rounded-2xl bg-slate-950/85 border border-slate-800/80 p-2.5 sm:p-4 shadow-xl backdrop-blur-md overflow-hidden"
               >
                 <div className="flex items-center justify-between mb-1 px-1 z-10">
-                  <h3 className="text-lg sm:text-2xl font-light tracking-wider text-slate-100">SLR</h3>
-                  <span className="text-xs font-mono text-rose-400">MAE: 52,654</span>
+                  <h3 className={`font-light tracking-wider text-slate-100 ${isTVMode ? 'text-2xl sm:text-3xl 2xl:text-4xl' : 'text-lg sm:text-2xl'}`}>SLR</h3>
+                  <span className={`font-mono text-rose-400 ${isTVMode ? 'text-sm sm:text-base 2xl:text-lg font-bold' : 'text-xs'}`}>MAE: 52,654</span>
                 </div>
                 <div className="flex-1 relative w-full h-full min-h-0">
                   <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-full overflow-visible">
@@ -2032,36 +2142,36 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     {[250000, 350000, 450000].map(v => (
                       <g key={v}>
                         <line x1={padLeft} y1={getY(v)} x2={padLeft + plotW} y2={getY(v)} stroke="#334155" strokeDasharray="4 4" strokeOpacity="0.6" />
-                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace" fontWeight="500">
+                        <text x={padLeft - 8} y={getY(v) + 4} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "17" : "14"} fontFamily="monospace" fontWeight="500">
                           {v / 1000}k
                         </text>
                       </g>
                     ))}
 
                     {/* Y-Axis Line & X-Axis Baseline */}
-                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="monospace">
+                    <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.8"} />
+                    <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">
                       TEUs
                     </text>
 
                     {/* Mini Legend */}
                     <g transform={`translate(${padLeft + plotW - 130}, ${padTop - 8})`}>
-                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth="2" strokeDasharray="3 2" />
-                      <text x="22" y="3" fill="#94A3B8" fontSize="9" fontFamily="monospace">Actual</text>
-                      <line x1="68" y1="0" x2="84" y2="0" stroke="#F43F5E" strokeWidth="2.5" />
-                      <text x="90" y="3" fill="#F43F5E" fontSize="9" fontFamily="monospace">SLR</text>
+                      <line x1="0" y1="0" x2="16" y2="0" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="3 2" />
+                      <text x="22" y="3" fill="#94A3B8" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">Actual</text>
+                      <line x1="68" y1="0" x2="84" y2="0" stroke="#F43F5E" strokeWidth={isTVMode ? "4" : "2.8"} />
+                      <text x="90" y="3" fill="#F43F5E" fontSize={isTVMode ? "15" : "12"} fontFamily="monospace">SLR</text>
                     </g>
 
                     {/* X Ticks (Periods 1-30) */}
                     {devTicks.map(t => (
-                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 20} textAnchor="middle" fill="#64748B" fontSize="10" fontFamily="monospace">
+                      <text key={t.period} x={getDevX(t.period)} y={padTop + plotH + 22} textAnchor="middle" fill="#94A3B8" fontSize={isTVMode ? "16" : "13"} fontFamily="monospace">
                         {t.label}
                       </text>
                     ))}
 
                     {/* Actual Series Reference Aligned to Y-Axis (Periods 1-30) */}
-                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth="2" strokeDasharray="4 3" strokeOpacity="0.85" />
+                    <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth={isTVMode ? "3" : "2"} strokeDasharray="4 3" strokeOpacity="0.85" />
 
                     {/* Shaded Area */}
                     <path
@@ -2075,7 +2185,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devSlrPoints)}
                       fill="none"
                       stroke="#E11D48"
-                      strokeWidth="6"
+                      strokeWidth={isTVMode ? "10" : "7"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity="0.3"
@@ -2091,7 +2201,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={toPath(devSlrPoints)}
                       fill="none"
                       stroke="#F43F5E"
-                      strokeWidth="3"
+                      strokeWidth={isTVMode ? "5" : "3.5"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -2103,8 +2213,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     {/* Steady Head Beacon */}
                     <g transform={`translate(${gridHeadSlr.x}, ${gridHeadSlr.y})`}>
-                      <circle r="5" fill="#F43F5E" opacity="0.4" />
-                      <circle r="3.5" fill="#F43F5E" />
+                      <circle r={isTVMode ? "7" : "5"} fill="#F43F5E" opacity="0.4" />
+                      <circle r={isTVMode ? "5" : "3.5"} fill="#F43F5E" />
                       <circle r="1.5" fill="#FFFFFF" />
                     </g>
                   </svg>
@@ -2117,29 +2227,33 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
             {/* ROCK-STEADY CENTER STAGE SPOTLIGHT CARD */}
             <AnimatePresence mode="wait">
               {activeSoloModel && (
-                <div className="absolute inset-0 z-30 flex items-center justify-center p-3 sm:p-5 md:p-6 pointer-events-none">
+                <div className="absolute inset-0 z-30 flex items-center justify-center p-2 sm:p-4 md:p-6 pointer-events-none">
                   <motion.div
                     key={activeSoloModel}
                     initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1.0 }}
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={{ duration: 0.35, ease: "easeOut" }}
-                    className="relative w-full max-w-5xl h-[72vh] max-h-[600px] bg-slate-950/95 border border-slate-700/80 rounded-3xl shadow-[0_30px_90px_rgba(0,0,0,0.95)] p-4 sm:p-6 backdrop-blur-2xl flex flex-col pointer-events-auto"
+                    className={`relative w-full ${
+                      isTVMode
+                        ? 'max-w-[95vw] 2xl:max-w-[96vw] h-[82vh] 2xl:h-[86vh] max-h-[920px]'
+                        : 'max-w-5xl sm:max-w-6xl h-[72vh] sm:h-[75vh] max-h-[660px]'
+                    } bg-slate-950/95 border border-slate-700/80 rounded-3xl shadow-[0_30px_90px_rgba(0,0,0,0.95)] p-3 sm:p-5 2xl:p-8 backdrop-blur-2xl flex flex-col pointer-events-auto`}
                   >
                     {/* Model Top Bar: Overlapped Comparison */}
                     <div className="flex items-center justify-between mb-2 px-1 z-10">
-                      <div className="flex items-center gap-2.5">
-                        <h3 className="text-xl sm:text-2xl font-light tracking-wider text-slate-100">
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <h3 className="text-base sm:text-xl 2xl:text-3xl font-light tracking-wider text-slate-100">
                           ALL 4 CONVENTIONAL MODELS OVERLAPPED
                         </h3>
-                        <span className="text-[10px] sm:text-xs font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-2.5 py-0.5 rounded-full">
+                        <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-2 sm:px-3 py-0.5 rounded-full">
                           Development Stage (Periods 1–30)
                         </span>
                       </div>
 
                       <button
                         onClick={() => setManualSolo('grid')}
-                        className="text-slate-400 hover:text-slate-100 text-xs font-mono uppercase tracking-widest px-2.5 py-1 rounded-full bg-slate-800/60 border border-slate-700 hover:border-slate-500 transition-colors"
+                        className="text-slate-400 hover:text-slate-100 text-[10px] sm:text-xs 2xl:text-sm font-mono uppercase tracking-widest px-2.5 sm:px-3.5 py-1 rounded-full bg-slate-800/60 border border-slate-700 hover:border-slate-500 transition-colors"
                       >
                         4 in One Frame (Grid)
                       </button>
@@ -2180,9 +2294,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               y={getY(v) + 3}
                               textAnchor="end"
                               fill="#94A3B8"
-                              fontSize="10"
+                              fontSize={isTVMode ? "15" : "10"}
                               fontFamily="monospace"
-                              fontWeight="500"
+                              fontWeight="600"
                             >
                               {(v / 1000).toFixed(0)}k
                             </text>
@@ -2190,9 +2304,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                         ))}
 
                         {/* Y-Axis Line & X-Axis Baseline */}
-                        <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                        <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth="1.5" />
-                        <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="monospace">
+                        <line x1={padLeft} y1={padTop} x2={padLeft} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.5"} />
+                        <line x1={padLeft} y1={padTop + plotH} x2={padLeft + plotW} y2={padTop + plotH} stroke="#475569" strokeWidth={isTVMode ? "2.5" : "1.5"} />
+                        <text x={padLeft - 8} y={padTop - 8} textAnchor="end" fill="#94A3B8" fontSize={isTVMode ? "14" : "9"} fontFamily="monospace" fontWeight="bold">
                           TEUs
                         </text>
 
@@ -2201,22 +2315,19 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           <text
                             key={t.period}
                             x={getDevX(t.period)}
-                            y={padTop + plotH + 22}
+                            y={padTop + plotH + (isTVMode ? 26 : 22)}
                             textAnchor="middle"
-                            fill="#64748B"
-                            fontSize="11"
+                            fill="#CBD5E1"
+                            fontSize={isTVMode ? "15" : "11"}
                             fontFamily="monospace"
+                            fontWeight="500"
                           >
                             {t.label}
                           </text>
                         ))}
 
                         {/* Actual Series Reference Aligned to Y-Axis (Periods 1-30) */}
-                        <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth="2" strokeDasharray="4 3" strokeOpacity="0.85" />
-
-
-
-
+                        <path d={devActualPath} fill="none" stroke="#94A3B8" strokeWidth={isTVMode ? "3.5" : "2"} strokeDasharray="4 3" strokeOpacity="0.85" />
 
                         {/* OVERLAP ALL CONVENTIONAL MODELS VIEW */}
                         {activeSoloModel === 'overlap' && (
@@ -2226,7 +2337,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devSmaPoints)}
                               fill="none"
                               stroke="#38BDF8"
-                              strokeWidth="2.5"
+                              strokeWidth={isTVMode ? "4.5" : "2.5"}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               style={{
@@ -2236,8 +2347,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               className="filter drop-shadow-[0_0_6px_rgba(56,189,248,0.7)]"
                             />
                             <g transform={`translate(${overlapHeadSma.x}, ${overlapHeadSma.y})`}>
-                              <circle r="5" fill="#38BDF8" opacity="0.4" />
-                              <circle r="3.5" fill="#38BDF8" />
+                              <circle r={isTVMode ? "8" : "5"} fill="#38BDF8" opacity="0.4" />
+                              <circle r={isTVMode ? "5" : "3.5"} fill="#38BDF8" />
                               <circle r="1.5" fill="#FFFFFF" />
                             </g>
 
@@ -2246,7 +2357,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devWmaPoints)}
                               fill="none"
                               stroke="#34D399"
-                              strokeWidth="2.5"
+                              strokeWidth={isTVMode ? "4.5" : "2.5"}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               style={{
@@ -2256,8 +2367,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               className="filter drop-shadow-[0_0_6px_rgba(52,211,153,0.7)]"
                             />
                             <g transform={`translate(${overlapHeadWma.x}, ${overlapHeadWma.y})`}>
-                              <circle r="5" fill="#34D399" opacity="0.4" />
-                              <circle r="3.5" fill="#34D399" />
+                              <circle r={isTVMode ? "8" : "5"} fill="#34D399" opacity="0.4" />
+                              <circle r={isTVMode ? "5" : "3.5"} fill="#34D399" />
                               <circle r="1.5" fill="#FFFFFF" />
                             </g>
 
@@ -2266,11 +2377,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devEs02Points)}
                               fill="none"
                               stroke="#7DD3FC"
-                              strokeWidth="1.6"
+                              strokeWidth={isTVMode ? "2.8" : "1.6"}
                               strokeDasharray="4 3"
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                              strokeOpacity="0.7"
+                              strokeOpacity="0.75"
                               style={{
                                 strokeDasharray: 1600,
                                 strokeDashoffset: 1600 * (1 - overlapProg)
@@ -2282,11 +2393,11 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devEs08Points)}
                               fill="none"
                               stroke="#FB923C"
-                              strokeWidth="1.6"
+                              strokeWidth={isTVMode ? "2.8" : "1.6"}
                               strokeDasharray="4 3"
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                              strokeOpacity="0.7"
+                              strokeOpacity="0.75"
                               style={{
                                 strokeDasharray: 1600,
                                 strokeDashoffset: 1600 * (1 - overlapProg)
@@ -2298,7 +2409,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devSlrPoints)}
                               fill="none"
                               stroke="#F43F5E"
-                              strokeWidth="2.5"
+                              strokeWidth={isTVMode ? "4.5" : "2.5"}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               style={{
@@ -2308,8 +2419,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               className="filter drop-shadow-[0_0_6px_rgba(244,63,94,0.7)]"
                             />
                             <g transform={`translate(${overlapHeadSlr.x}, ${overlapHeadSlr.y})`}>
-                              <circle r="5" fill="#F43F5E" opacity="0.4" />
-                              <circle r="3.5" fill="#F43F5E" />
+                              <circle r={isTVMode ? "8" : "5"} fill="#F43F5E" opacity="0.4" />
+                              <circle r={isTVMode ? "5" : "3.5"} fill="#F43F5E" />
                               <circle r="1.5" fill="#FFFFFF" />
                             </g>
 
@@ -2318,7 +2429,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devEs05Points)}
                               fill="none"
                               stroke="#D97706"
-                              strokeWidth="9"
+                              strokeWidth={isTVMode ? "14" : "9"}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               opacity="0.3"
@@ -2332,7 +2443,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               d={toPath(devEs05Points)}
                               fill="none"
                               stroke="#F2A541"
-                              strokeWidth="4"
+                              strokeWidth={isTVMode ? "6" : "4"}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               style={{
@@ -2342,9 +2453,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                               className="filter drop-shadow-[0_0_12px_rgba(242,165,65,0.95)]"
                             />
                             <g transform={`translate(${overlapHeadEts05.x}, ${overlapHeadEts05.y})`}>
-                              <circle r="8" fill="#F2A541" opacity="0.3" />
-                              <circle r="5.5" fill="#F2A541" />
-                              <circle r="2" fill="#FFFFFF" />
+                              <circle r={isTVMode ? "11" : "8"} fill="#F2A541" opacity="0.3" />
+                              <circle r={isTVMode ? "7" : "5.5"} fill="#F2A541" />
+                              <circle r={isTVMode ? "3" : "2"} fill="#FFFFFF" />
                             </g>
                           </>
                         )}
@@ -2353,30 +2464,30 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
 
                     {/* Bottom Legend Badges for Overlap View */}
                     {activeSoloModel === 'overlap' && (
-                      <div className="mt-3 pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                          <span className="inline-flex items-center gap-1.5 text-slate-400">
-                            <span className="w-3 h-0.5 border-b border-dashed border-slate-400" />
+                      <div className="mt-3 pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm 2xl:text-base font-mono">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3 2xl:gap-5">
+                          <span className="inline-flex items-center gap-1.5 text-slate-300">
+                            <span className="w-3.5 h-0.5 border-b border-dashed border-slate-300" />
                             Actual
                           </span>
                           <span className="inline-flex items-center gap-1.5 text-sky-400">
-                            <span className="w-3 h-0.5 bg-sky-400" />
+                            <span className="w-3.5 h-1 rounded bg-sky-400" />
                             SMA (33,428)
                           </span>
                           <span className="inline-flex items-center gap-1.5 text-emerald-400">
-                            <span className="w-3 h-0.5 bg-emerald-400" />
+                            <span className="w-3.5 h-1 rounded bg-emerald-400" />
                             WMA (32,142)
                           </span>
                           <span className="inline-flex items-center gap-1.5 text-rose-400">
-                            <span className="w-3 h-0.5 bg-rose-400" />
+                            <span className="w-3.5 h-1 rounded bg-rose-400" />
                             SLR (52,654)
                           </span>
-                          <span className="inline-flex items-center gap-1.5 text-amber-300 font-bold bg-amber-500/10 border border-amber-400/30 px-2 py-0.5 rounded">
-                            <span className="w-3 h-1 bg-[#F2A541] rounded-full" />
+                          <span className="inline-flex items-center gap-1.5 text-amber-300 font-bold bg-amber-500/15 border border-amber-400/30 px-2.5 py-0.5 rounded-lg">
+                            <span className="w-3.5 h-1.5 bg-[#F2A541] rounded-full" />
                             ETS α0.50 (30,596 · Lowest Dev MAE)
                           </span>
                         </div>
-                        <span className="text-[11px] text-slate-400 italic">
+                        <span className="text-[11px] sm:text-xs 2xl:text-sm text-slate-400 italic">
                           Lower MAE = Better Fit
                         </span>
                       </div>
@@ -2403,18 +2514,18 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
               className="text-center flex flex-col items-center gap-4"
             >
               {beatElapsedSeconds < 4.5 ? (
-                <h1 className="text-5xl md:text-8xl font-extralight text-slate-100 tracking-[0.2em] uppercase">
+                <h1 className="text-5xl md:text-8xl 2xl:text-9xl font-extralight text-slate-100 tracking-[0.2em] uppercase">
                   THE BASELINE
                 </h1>
               ) : (
                 <div className="flex flex-col items-center gap-3">
-                  <span className="text-xs font-mono uppercase tracking-[0.3em] text-slate-400 block mb-1">
+                  <span className="text-xs sm:text-sm 2xl:text-base font-mono uppercase tracking-[0.3em] text-slate-400 block mb-1">
                     Pre-Validation Locked Baseline · Development Periods 1–30
                   </span>
-                  <h1 className="text-5xl md:text-8xl font-extralight text-slate-100 tracking-tight">
+                  <h1 className="text-5xl md:text-8xl 2xl:text-9xl font-extralight text-slate-100 tracking-tight">
                     ETS <span className="text-[#F2A541] font-normal">α = 0.50</span>
                   </h1>
-                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs sm:text-sm font-mono font-bold mt-2">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 2xl:px-6 2xl:py-2.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs sm:text-sm 2xl:text-lg font-mono font-bold mt-2">
                     <span>Locked at 30,596 TEUs MAE</span>
                     <span className="text-slate-500">·</span>
                     <span className="text-slate-300">Periods 31–36 Blind Holdout</span>
@@ -2436,15 +2547,19 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1.0 }}
               exit={{ opacity: 0, scale: 0.98 }}
-              className="w-full max-w-6xl h-[78vh] flex flex-col items-center justify-center px-2 sm:px-4"
+              className={`w-full ${
+                isTVMode
+                  ? 'max-w-[96vw] 2xl:max-w-[97vw] h-[83vh] 2xl:h-[87vh] max-h-[940px]'
+                  : 'max-w-6xl h-[78vh]'
+              } flex flex-col items-center justify-center px-1 sm:px-4`}
             >
               {/* Minimal Clean Header with Progressive Stages */}
               <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-2 mb-2 px-2">
-                <div className="flex items-center gap-2.5">
-                  <h2 className="text-base sm:text-xl md:text-2xl font-light tracking-wide text-white">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <h2 className="text-base sm:text-xl md:text-2xl 2xl:text-3xl font-light tracking-wide text-white">
                     Actual vs. Statistical &amp; Machine Learning Forecasts
                   </h2>
-                  <span className="text-[10px] sm:text-xs font-mono uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300">
+                  <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300">
                     {statModelFilter === 'arima' && 'Stage 1/4 · ARIMA (1,1,0) Candidate Run'}
                     {statModelFilter === 'lr' && 'Stage 2/4 · Lagged Linear Regression Run'}
                     {statModelFilter === 'rf' && 'Stage 3/4 · Random Forest Regressor Run'}
@@ -2457,7 +2572,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <button
                     type="button"
                     onClick={() => setManualStatFilter('arima')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-mono transition-all ${
+                    className={`px-2.5 sm:px-3.5 py-1 2xl:py-1.5 rounded-lg text-[10px] sm:text-xs 2xl:text-sm font-mono transition-all ${
                       statModelFilter === 'arima'
                         ? 'bg-orange-500/20 text-[#ff7f0e] border border-orange-500/50 shadow font-bold'
                         : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -2468,7 +2583,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <button
                     type="button"
                     onClick={() => setManualStatFilter('lr')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-mono transition-all ${
+                    className={`px-2.5 sm:px-3.5 py-1 2xl:py-1.5 rounded-lg text-[10px] sm:text-xs 2xl:text-sm font-mono transition-all ${
                       statModelFilter === 'lr'
                         ? 'bg-emerald-500/20 text-[#34D399] border border-emerald-500/50 shadow font-bold'
                         : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -2479,7 +2594,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <button
                     type="button"
                     onClick={() => setManualStatFilter('rf')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-mono transition-all ${
+                    className={`px-2.5 sm:px-3.5 py-1 2xl:py-1.5 rounded-lg text-[10px] sm:text-xs 2xl:text-sm font-mono transition-all ${
                       statModelFilter === 'rf'
                         ? 'bg-red-500/20 text-[#d62728] border border-red-500/50 shadow font-bold'
                         : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -2490,7 +2605,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <button
                     type="button"
                     onClick={() => setManualStatFilter('all')}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-mono transition-all ${
+                    className={`px-2.5 sm:px-3.5 py-1 2xl:py-1.5 rounded-lg text-[10px] sm:text-xs 2xl:text-sm font-mono transition-all ${
                       statModelFilter === 'all'
                         ? 'bg-amber-500/20 text-[#F2A541] border border-amber-500/50 shadow font-bold'
                         : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -2502,7 +2617,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
               </div>
 
                 {/* Expansive Standalone High-Res SVG Graph Container */}
-                <div className="relative w-full flex-1 rounded-2xl bg-slate-950/95 border border-slate-800 p-2 sm:p-4 shadow-2xl backdrop-blur-xl flex flex-col min-h-0 overflow-hidden">
+                <div className="relative w-full flex-1 rounded-2xl bg-slate-950/95 border border-slate-800 p-2 sm:p-4 2xl:p-6 shadow-2xl backdrop-blur-xl flex flex-col min-h-0 overflow-hidden">
                   <svg viewBox={`0 0 ${holdoutSvgW} ${holdoutSvgH}`} className="w-full flex-1 overflow-visible">
                     <defs>
                       <filter id="arimaHoldoutGlow" x="-20%" y="-20%" width="140%" height="140%">
@@ -2526,7 +2641,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       transform="rotate(-90)"
                       textAnchor="middle"
                       fill="#94A3B8"
-                      fontSize="12"
+                      fontSize={isTVMode ? "16" : "12"}
                       fontFamily="sans-serif"
                     >
                       Export Volume (TEUs)
@@ -2538,7 +2653,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       y={holdoutSvgH - 10}
                       textAnchor="middle"
                       fill="#94A3B8"
-                      fontSize="12"
+                      fontSize={isTVMode ? "16" : "12"}
                       fontFamily="sans-serif"
                     >
                       Validation Horizon (July 2024 – December 2024)
@@ -2552,7 +2667,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       height={holdoutPlotH}
                       fill="none"
                       stroke="#475569"
-                      strokeWidth="1.2"
+                      strokeWidth={isTVMode ? "2" : "1.2"}
                     />
 
                     {/* Horizontal Y Gridlines & Ticks (380000 to 460000) */}
@@ -2564,16 +2679,17 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           x2={holdoutPadL + holdoutPlotW}
                           y2={getHoldoutY(v)}
                           stroke="#334155"
-                          strokeWidth="0.8"
+                          strokeWidth={isTVMode ? "1.2" : "0.8"}
                           strokeDasharray="4 4"
                         />
                         <text
                           x={holdoutPadL - 8}
                           y={getHoldoutY(v) + 4}
                           textAnchor="end"
-                          fill="#94A3B8"
-                          fontSize="11"
+                          fill="#CBD5E1"
+                          fontSize={isTVMode ? "15" : "11"}
                           fontFamily="monospace"
+                          fontWeight="600"
                         >
                           {v.toLocaleString()}
                         </text>
@@ -2589,15 +2705,15 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           x2={pt.x}
                           y2={holdoutPadT + holdoutPlotH}
                           stroke="#334155"
-                          strokeWidth="0.8"
+                          strokeWidth={isTVMode ? "1.2" : "0.8"}
                           strokeDasharray="4 4"
                         />
                         <text
                           x={pt.x}
-                          y={holdoutPadT + holdoutPlotH + 20}
+                          y={holdoutPadT + holdoutPlotH + (isTVMode ? 24 : 20)}
                           textAnchor="middle"
-                          fill="#CBD5E1"
-                          fontSize="12"
+                          fill="#E2E8F0"
+                          fontSize={isTVMode ? "16" : "12"}
                           fontFamily="monospace"
                           fontWeight="bold"
                         >
@@ -2611,7 +2727,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutActualPath}
                       fill="none"
                       stroke="#1f77b4"
-                      strokeWidth="4"
+                      strokeWidth={isTVMode ? "6" : "4"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -2628,10 +2744,10 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           key={`pt-act-${i}`}
                           cx={pt.x}
                           cy={pt.y}
-                          r="5"
+                          r={isTVMode ? "7" : "5"}
                           fill="#1f77b4"
                           stroke="#FFFFFF"
-                          strokeWidth="1.5"
+                          strokeWidth={isTVMode ? "2" : "1.5"}
                           opacity={isRevealed ? (statModelFilter === 'all' ? 1.0 : 0.7) : 0}
                           className="transition-opacity duration-300"
                         />
@@ -2639,9 +2755,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     })}
                     {statVsMlProg > 0 && statModelFilter === 'all' && (
                       <g transform={`translate(${statHeadActual.x}, ${statHeadActual.y})`}>
-                        <circle r="8" fill="#1f77b4" opacity="0.35" />
-                        <circle r="5" fill="#1f77b4" />
-                        <circle r="2.5" fill="#FFFFFF" />
+                        <circle r={isTVMode ? "11" : "8"} fill="#1f77b4" opacity="0.35" />
+                        <circle r={isTVMode ? "7" : "5"} fill="#1f77b4" />
+                        <circle r={isTVMode ? "3" : "2.5"} fill="#FFFFFF" />
                       </g>
                     )}
 
@@ -2650,7 +2766,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutArimaPath}
                       fill="none"
                       stroke="#ea580c"
-                      strokeWidth="9"
+                      strokeWidth={isTVMode ? "15" : "9"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={statModelFilter === 'all' || statModelFilter === 'arima' ? 0.35 : 0}
@@ -2664,7 +2780,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutArimaPath}
                       fill="none"
                       stroke="#ff7f0e"
-                      strokeWidth={statModelFilter === 'arima' ? '5.5' : '4.5'}
+                      strokeWidth={isTVMode ? "8" : (statModelFilter === 'arima' ? '5.5' : '4.5')}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -2681,10 +2797,10 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           key={`pt-ar-${i}`}
                           cx={pt.x}
                           cy={pt.y}
-                          r="5"
+                          r={isTVMode ? "7.5" : "5"}
                           fill="#ff7f0e"
                           stroke="#FFFFFF"
-                          strokeWidth="1.5"
+                          strokeWidth={isTVMode ? "2" : "1.5"}
                           opacity={isRevealed && (statModelFilter === 'all' || statModelFilter === 'arima') ? 1 : 0}
                           className="transition-opacity duration-300"
                         />
@@ -2692,9 +2808,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     })}
                     {statVsMlProg > 0 && (statModelFilter === 'all' || statModelFilter === 'arima') && (
                       <g transform={`translate(${statHeadArima.x}, ${statHeadArima.y})`}>
-                        <circle r="9" fill="#ff7f0e" opacity="0.4" />
-                        <circle r="5.5" fill="#ff7f0e" />
-                        <circle r="2.5" fill="#FFFFFF" />
+                        <circle r={isTVMode ? "12" : "9"} fill="#ff7f0e" opacity="0.4" />
+                        <circle r={isTVMode ? "7.5" : "5.5"} fill="#ff7f0e" />
+                        <circle r={isTVMode ? "3" : "2.5"} fill="#FFFFFF" />
                       </g>
                     )}
 
@@ -2703,7 +2819,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutLrPath}
                       fill="none"
                       stroke="#059669"
-                      strokeWidth="7"
+                      strokeWidth={isTVMode ? "12" : "7"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={statModelFilter === 'all' || statModelFilter === 'lr' ? 0.35 : 0}
@@ -2717,7 +2833,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutLrPath}
                       fill="none"
                       stroke="#34D399"
-                      strokeWidth={statModelFilter === 'lr' ? '5' : '4'}
+                      strokeWidth={isTVMode ? "7" : (statModelFilter === 'lr' ? '5' : '4')}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -2734,10 +2850,10 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           key={`pt-lr-${i}`}
                           cx={pt.x}
                           cy={pt.y}
-                          r="5"
+                          r={isTVMode ? "7" : "5"}
                           fill="#34D399"
                           stroke="#FFFFFF"
-                          strokeWidth="1.5"
+                          strokeWidth={isTVMode ? "2" : "1.5"}
                           opacity={isRevealed && (statModelFilter === 'all' || statModelFilter === 'lr') ? 1 : 0}
                           className="transition-opacity duration-300"
                         />
@@ -2745,9 +2861,9 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     })}
                     {statVsMlProg > 0 && (statModelFilter === 'all' || statModelFilter === 'lr') && (
                       <g transform={`translate(${statHeadLr.x}, ${statHeadLr.y})`}>
-                        <circle r="8" fill="#34D399" opacity="0.35" />
-                        <circle r="5" fill="#34D399" />
-                        <circle r="2.5" fill="#FFFFFF" />
+                        <circle r={isTVMode ? "11" : "8"} fill="#34D399" opacity="0.35" />
+                        <circle r={isTVMode ? "7" : "5"} fill="#34D399" />
+                        <circle r={isTVMode ? "3" : "2.5"} fill="#FFFFFF" />
                       </g>
                     )}
 
@@ -2756,7 +2872,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutRfPath}
                       fill="none"
                       stroke="#991b1b"
-                      strokeWidth="7"
+                      strokeWidth={isTVMode ? "12" : "7"}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={statModelFilter === 'all' || statModelFilter === 'rf' ? 0.35 : 0}
@@ -2770,7 +2886,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                       d={holdoutRfPath}
                       fill="none"
                       stroke="#d62728"
-                      strokeWidth={statModelFilter === 'rf' ? '5' : '4'}
+                      strokeWidth={isTVMode ? "7" : (statModelFilter === 'rf' ? '5' : '4')}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       style={{
@@ -2787,10 +2903,10 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                           key={`pt-rf-${i}`}
                           cx={pt.x}
                           cy={pt.y}
-                          r="5"
+                          r={isTVMode ? "7" : "5"}
                           fill="#d62728"
                           stroke="#FFFFFF"
-                          strokeWidth="1.5"
+                          strokeWidth={isTVMode ? "2" : "1.5"}
                           opacity={isRevealed && (statModelFilter === 'all' || statModelFilter === 'rf') ? 1 : 0}
                           className="transition-opacity duration-300"
                         />
@@ -2798,67 +2914,67 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     })}
                     {statVsMlProg > 0 && (statModelFilter === 'all' || statModelFilter === 'rf') && (
                       <g transform={`translate(${statHeadRf.x}, ${statHeadRf.y})`}>
-                        <circle r="8" fill="#d62728" opacity="0.35" />
-                        <circle r="5" fill="#d62728" />
-                        <circle r="2.5" fill="#FFFFFF" />
+                        <circle r={isTVMode ? "11" : "8"} fill="#d62728" opacity="0.35" />
+                        <circle r={isTVMode ? "7" : "5"} fill="#d62728" />
+                        <circle r={isTVMode ? "3" : "2.5"} fill="#FFFFFF" />
                       </g>
                     )}
 
                     {/* Integrated Legend Box */}
-                    <g transform={`translate(${holdoutPadL + holdoutPlotW - 220}, ${holdoutPadT + 16})`}>
+                    <g transform={`translate(${holdoutPadL + holdoutPlotW - (isTVMode ? 260 : 220)}, ${holdoutPadT + 16})`}>
                       <rect
                         x="0"
                         y="0"
-                        width="210"
-                        height="105"
-                        rx="8"
+                        width={isTVMode ? "250" : "210"}
+                        height={isTVMode ? "120" : "105"}
+                        rx="10"
                         fill="#060B14"
-                        fillOpacity="0.92"
+                        fillOpacity="0.94"
                         stroke="#334155"
-                        strokeWidth="1"
+                        strokeWidth="1.2"
                       />
-                      <circle cx="16" cy="18" r="4.5" fill="#1f77b4" />
-                      <line x1="8" y1="18" x2="24" y2="18" stroke="#1f77b4" strokeWidth="2.5" />
-                      <text x="32" y="22" fill="#E2E8F0" fontSize="12" fontFamily="sans-serif">
+                      <circle cx="16" cy={isTVMode ? 20 : 18} r={isTVMode ? "5.5" : "4.5"} fill="#1f77b4" />
+                      <line x1="8" y1={isTVMode ? 20 : 18} x2="24" y2={isTVMode ? 20 : 18} stroke="#1f77b4" strokeWidth={isTVMode ? "3.5" : "2.5"} />
+                      <text x="32" y={isTVMode ? 25 : 22} fill="#E2E8F0" fontSize={isTVMode ? "14" : "12"} fontFamily="sans-serif">
                         Actual Series
                       </text>
 
-                      <circle cx="16" cy="42" r="5" fill="#ff7f0e" />
-                      <line x1="8" y1="42" x2="24" y2="42" stroke="#ff7f0e" strokeWidth="3" />
-                      <text x="32" y="46" fill="#F2A541" fontSize="12" fontFamily="sans-serif" fontWeight="bold">
+                      <circle cx="16" cy={isTVMode ? 48 : 42} r={isTVMode ? "6" : "5"} fill="#ff7f0e" />
+                      <line x1="8" y1={isTVMode ? 48 : 42} x2="24" y2={isTVMode ? 48 : 42} stroke="#ff7f0e" strokeWidth={isTVMode ? "4" : "3"} />
+                      <text x="32" y={isTVMode ? 53 : 46} fill="#F2A541" fontSize={isTVMode ? "14" : "12"} fontFamily="sans-serif" fontWeight="bold">
                         ARIMA (1,1,0)
                       </text>
 
-                      <circle cx="16" cy="66" r="4.5" fill="#34D399" />
-                      <line x1="8" y1="66" x2="24" y2="66" stroke="#34D399" strokeWidth="2.5" />
-                      <text x="32" y="70" fill="#CBD5E1" fontSize="11" fontFamily="sans-serif">
+                      <circle cx="16" cy={isTVMode ? 76 : 66} r={isTVMode ? "5.5" : "4.5"} fill="#34D399" />
+                      <line x1="8" y1={isTVMode ? 76 : 66} x2="24" y2={isTVMode ? 76 : 66} stroke="#34D399" strokeWidth={isTVMode ? "3.5" : "2.5"} />
+                      <text x="32" y={isTVMode ? 81 : 70} fill="#CBD5E1" fontSize={isTVMode ? "13" : "11"} fontFamily="sans-serif">
                         Lagged Linear Reg
                       </text>
 
-                      <circle cx="16" cy="90" r="4.5" fill="#d62728" />
-                      <line x1="8" y1="90" x2="24" y2="90" stroke="#d62728" strokeWidth="2.5" />
-                      <text x="32" y="94" fill="#CBD5E1" fontSize="11" fontFamily="sans-serif">
+                      <circle cx="16" cy={isTVMode ? 104 : 90} r={isTVMode ? "5.5" : "4.5"} fill="#d62728" />
+                      <line x1="8" y1={isTVMode ? 104 : 90} x2="24" y2={isTVMode ? 104 : 90} stroke="#d62728" strokeWidth={isTVMode ? "3.5" : "2.5"} />
+                      <text x="32" y={isTVMode ? 109 : 94} fill="#CBD5E1" fontSize={isTVMode ? "13" : "11"} fontFamily="sans-serif">
                         Random Forest
                       </text>
                     </g>
                   </svg>
 
                   {/* Clean Bottom Legend Strip */}
-                  <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 text-xs font-mono pt-2 border-t border-slate-900 text-slate-300">
+                  <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 2xl:gap-10 text-xs sm:text-sm 2xl:text-base font-mono pt-2 border-t border-slate-900 text-slate-300">
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full bg-[#1f77b4]" />
+                      <span className="w-3 h-3 2xl:w-4 2xl:h-4 rounded-full bg-[#1f77b4]" />
                       <span className="font-semibold text-white">Actual (426k – 460k TEUs)</span>
                     </span>
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full bg-[#ff7f0e]" />
+                      <span className="w-3 h-3 2xl:w-4 2xl:h-4 rounded-full bg-[#ff7f0e]" />
                       <span className="font-bold text-[#ff7f0e]">ARIMA (1,1,0): 20,919 MAE · 4.71% MAPE</span>
                     </span>
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full bg-[#34D399]" />
+                      <span className="w-3 h-3 2xl:w-4 2xl:h-4 rounded-full bg-[#34D399]" />
                       <span className="text-[#86EFAC]">Lagged Linear Reg: 37,990 MAE</span>
                     </span>
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full bg-[#d62728]" />
+                      <span className="w-3 h-3 2xl:w-4 2xl:h-4 rounded-full bg-[#d62728]" />
                       <span className="text-[#FCA5A5]">Random Forest: 37,138 MAE</span>
                     </span>
                   </div>
@@ -2872,49 +2988,49 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
         {/* & ARIMA (1,1,0) DECISIVE PERFORMANCE (NO DUPLICATE ARIMA WINS)  */}
         {/* ============================================================== */}
         {currentBeatIndex === 5 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-3 sm:p-6 md:p-8 z-10 overflow-hidden bg-[#060B14]">
+          <div className={`absolute inset-0 flex flex-col items-center justify-center p-2 sm:p-4 md:p-6 2xl:p-8 z-10 ${isPhoneScreen ? 'overflow-y-auto phone-scrollable pb-24 pt-16' : 'overflow-hidden'} bg-[#060B14]`}>
             <motion.div
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1.0 }}
               transition={{ duration: 0.6 }}
-              className="w-full max-w-6xl flex flex-col lg:flex-row gap-6 items-stretch justify-center relative mx-auto px-4"
+              className={`w-full ${isTVMode ? 'max-w-[95vw] 2xl:max-w-[96vw]' : 'max-w-6xl'} flex flex-col lg:flex-row gap-4 2xl:gap-8 items-stretch justify-center relative mx-auto px-2 sm:px-4`}
             >
               {/* LEFT: Larger Validation Ranking Across All Models */}
-              <div className="flex-1 flex flex-col gap-3 rounded-2xl bg-slate-950/90 border border-slate-800 p-4 sm:p-6 backdrop-blur-xl shadow-2xl">
+              <div className="flex-1 flex flex-col gap-3 rounded-2xl bg-slate-950/90 border border-slate-800 p-4 sm:p-6 2xl:p-8 backdrop-blur-xl shadow-2xl">
                 <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <Award className="w-6 h-6 text-amber-400" />
+                    <Award className="w-6 h-6 2xl:w-8 2xl:h-8 text-amber-400" />
                     <div>
-                      <h2 className="text-xl sm:text-2xl font-light text-white tracking-wide">
+                      <h2 className="text-xl sm:text-2xl 2xl:text-3xl font-light text-white tracking-wide">
                         Validation Ranking Across All Models
                       </h2>
-                      <p className="text-xs font-mono text-slate-400">
+                      <p className="text-xs sm:text-sm 2xl:text-base font-mono text-slate-400">
                         Out-of-Sample MAE · Holdout Periods 31–36
                       </p>
                     </div>
                   </div>
-                  <div className="text-xs sm:text-sm font-mono font-bold text-[#F2A541] px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30">
+                  <div className="text-xs sm:text-sm 2xl:text-base font-mono font-bold text-[#F2A541] px-3 py-1 2xl:px-4 2xl:py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30">
                     ★ #1 ARIMA
                   </div>
                 </div>
 
-                <div className="space-y-2 mt-1">
+                <div className="space-y-2 2xl:space-y-3 mt-1">
                   {validationRanking.slice(0, 8).map((item, idx) => {
                     const isArima = item.rank === 1;
                     const isBaseline = item.name.includes('ETS') && item.name.includes('0.50');
                     const maxMAE = 46000;
                     const barWidth = Math.min(100, (item.mae / maxMAE) * 100);
                     return (
-                      <div key={item.name} className="flex items-center gap-2.5 text-xs sm:text-sm font-mono">
-                        <span className={`w-6 text-center font-bold ${isArima ? 'text-amber-400 text-sm' : 'text-slate-500'}`}>
+                      <div key={item.name} className="flex items-center gap-2.5 text-xs sm:text-sm 2xl:text-base font-mono">
+                        <span className={`w-6 2xl:w-8 text-center font-bold ${isArima ? 'text-amber-400 text-sm 2xl:text-lg' : 'text-slate-500'}`}>
                           #{item.rank}
                         </span>
-                        <span className={`w-36 sm:w-48 text-right truncate ${
-                          isArima ? 'text-[#F2A541] font-bold text-sm sm:text-base' : isBaseline ? 'text-sky-300 font-semibold' : 'text-slate-300'
+                        <span className={`w-36 sm:w-48 2xl:w-60 text-right truncate ${
+                          isArima ? 'text-[#F2A541] font-bold text-sm sm:text-base 2xl:text-lg' : isBaseline ? 'text-sky-300 font-semibold' : 'text-slate-300'
                         }`}>
                           {item.name} {isBaseline && '(Baseline)'}
                         </span>
-                        <div className="flex-1 h-5 sm:h-6 bg-slate-900/90 rounded-md border border-slate-800 relative overflow-hidden">
+                        <div className="flex-1 h-5 sm:h-6 2xl:h-8 bg-slate-900/90 rounded-md border border-slate-800 relative overflow-hidden">
                           <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: `${barWidth}%` }}
@@ -2928,8 +3044,8 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                             }`}
                           />
                         </div>
-                        <span className={`w-24 sm:w-28 text-right ${
-                          isArima ? 'text-[#F2A541] font-bold text-sm' : isBaseline ? 'text-sky-300' : 'text-slate-400'
+                        <span className={`w-24 sm:w-28 2xl:w-36 text-right ${
+                          isArima ? 'text-[#F2A541] font-bold text-sm 2xl:text-lg' : isBaseline ? 'text-sky-300' : 'text-slate-400'
                         }`}>
                           {item.mae.toLocaleString()} TEUs
                         </span>
@@ -2938,53 +3054,53 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   })}
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-slate-900 text-xs font-mono text-slate-400">
+                <div className="flex items-center justify-between pt-2 border-t border-slate-900 text-xs sm:text-sm 2xl:text-base font-mono text-slate-400">
                   <span>Reference: Naïve Repeat-Last: 19,944 TEUs</span>
                   <span className="text-emerald-400 font-bold">−24.5% error vs ETS α=0.50</span>
                 </div>
               </div>
 
               {/* RIGHT: ARIMA Decisive Performance Highlights */}
-              <div className="w-full lg:w-[42%] flex flex-col gap-3 rounded-2xl bg-[#0B2545]/40 border border-amber-500/30 p-4 sm:p-6 backdrop-blur-xl shadow-2xl justify-between">
+              <div className="w-full lg:w-[42%] flex flex-col gap-3 rounded-2xl bg-[#0B2545]/40 border border-amber-500/30 p-4 sm:p-6 2xl:p-8 backdrop-blur-xl shadow-2xl justify-between">
                 <div>
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-mono font-bold tracking-wider uppercase mb-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                  <div className="inline-flex items-center gap-2 px-3 py-1 2xl:px-4 2xl:py-1.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs 2xl:text-sm font-mono font-bold tracking-wider uppercase mb-2">
+                    <span className="w-2 h-2 2xl:w-3 2xl:h-3 rounded-full bg-amber-400 animate-ping" />
                     <span>Decisive Performance</span>
                   </div>
-                  <h3 className="text-2xl sm:text-3xl font-light text-white tracking-tight">
+                  <h3 className="text-2xl sm:text-3xl 2xl:text-4xl font-light text-white tracking-tight">
                     ARIMA (1,1,0) <span className="text-[#F2A541] font-normal">Victory</span>
                   </h3>
-                  <p className="text-xs font-mono text-slate-400 mt-0.5">
+                  <p className="text-xs sm:text-sm 2xl:text-base font-mono text-slate-400 mt-0.5">
                     Lowest error across both development and validation
                   </p>
                 </div>
 
                 {/* 4 Large Highlight Metric Badges */}
-                <div className="grid grid-cols-2 gap-3 my-2">
-                  <div className="p-3.5 rounded-xl bg-amber-950/60 border border-amber-400/60 flex flex-col">
-                    <span className="text-[10px] font-mono text-slate-300 uppercase">MAE (#1 Rank)</span>
-                    <span className="text-2xl sm:text-3xl font-bold font-mono text-white mt-1">20,919</span>
-                    <span className="text-[10px] font-mono text-emerald-400 mt-1">−24.5% vs Baseline</span>
+                <div className="grid grid-cols-2 gap-3 2xl:gap-4 my-2">
+                  <div className="p-3.5 2xl:p-5 rounded-xl bg-amber-950/60 border border-amber-400/60 flex flex-col">
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-slate-300 uppercase">MAE (#1 Rank)</span>
+                    <span className="text-2xl sm:text-3xl 2xl:text-4xl font-bold font-mono text-white mt-1">20,919</span>
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-emerald-400 mt-1">−24.5% vs Baseline</span>
                   </div>
-                  <div className="p-3.5 rounded-xl bg-amber-950/60 border border-amber-400/60 flex flex-col">
-                    <span className="text-[10px] font-mono text-slate-300 uppercase">MAPE (&lt;5% Band)</span>
-                    <span className="text-2xl sm:text-3xl font-bold font-mono text-[#F2A541] mt-1">4.71%</span>
-                    <span className="text-[10px] font-mono text-emerald-400 mt-1">Decisive Precision</span>
+                  <div className="p-3.5 2xl:p-5 rounded-xl bg-amber-950/60 border border-amber-400/60 flex flex-col">
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-slate-300 uppercase">MAPE (&lt;5% Band)</span>
+                    <span className="text-2xl sm:text-3xl 2xl:text-4xl font-bold font-mono text-[#F2A541] mt-1">4.71%</span>
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-emerald-400 mt-1">Decisive Precision</span>
                   </div>
-                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-700 flex flex-col">
-                    <span className="text-[10px] font-mono text-slate-400 uppercase">RMSE</span>
-                    <span className="text-xl sm:text-2xl font-bold font-mono text-white mt-1">24,426</span>
-                    <span className="text-[10px] font-mono text-sky-400 mt-1">Dampened Variance</span>
+                  <div className="p-3.5 2xl:p-5 rounded-xl bg-slate-950/80 border border-slate-700 flex flex-col">
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-slate-400 uppercase">RMSE</span>
+                    <span className="text-xl sm:text-2xl 2xl:text-3xl font-bold font-mono text-white mt-1">24,426</span>
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-sky-400 mt-1">Dampened Variance</span>
                   </div>
-                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-700 flex flex-col">
-                    <span className="text-[10px] font-mono text-slate-400 uppercase">Directional Drift</span>
-                    <span className="text-xl sm:text-2xl font-bold font-mono text-white mt-1">+2.43%</span>
-                    <span className="text-[10px] font-mono text-sky-400 mt-1">Minimal MPE Bias</span>
+                  <div className="p-3.5 2xl:p-5 rounded-xl bg-slate-950/80 border border-slate-700 flex flex-col">
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-slate-400 uppercase">Directional Drift</span>
+                    <span className="text-xl sm:text-2xl 2xl:text-3xl font-bold font-mono text-white mt-1">+2.43%</span>
+                    <span className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-sky-400 mt-1">Minimal MPE Bias</span>
                   </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono text-slate-300 flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <div className="p-3 2xl:p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs sm:text-sm 2xl:text-base font-mono text-slate-300 flex items-center gap-2">
+                  <Check className="w-4 h-4 2xl:w-5 2xl:h-5 text-emerald-400 flex-shrink-0" />
                   <span>Outperformed Random Forest (8.31%) &amp; Linear Trend (24.15%)</span>
                 </div>
               </div>
@@ -2998,22 +3114,22 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   animate={{ opacity: 1, y: 0, scale: 1.0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.5, ease: 'easeOut' }}
-                  className="w-full max-w-6xl mt-3 p-3.5 sm:p-4 rounded-2xl bg-slate-950/95 border-2 border-amber-500/80 shadow-[0_0_35px_rgba(242,165,65,0.4)] backdrop-blur-2xl flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left z-30"
+                  className={`w-full ${isTVMode ? 'max-w-[95vw] 2xl:max-w-[96vw]' : 'max-w-6xl'} mt-3 p-3.5 sm:p-5 2xl:p-6 rounded-2xl bg-slate-950/95 border-2 border-amber-500/80 shadow-[0_0_35px_rgba(242,165,65,0.4)] backdrop-blur-2xl flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left z-30`}
                 >
                   <div className="space-y-1">
-                    <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] sm:text-xs font-mono font-bold uppercase tracking-wider">
+                    <div className="inline-flex items-center gap-2 px-2.5 py-0.5 2xl:px-3 2xl:py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] sm:text-xs 2xl:text-sm font-mono font-bold uppercase tracking-wider">
                       <span>THE CRITICAL QUESTION · CLIMAX</span>
                     </div>
-                    <h3 className="text-lg sm:text-2xl md:text-3xl font-light text-white tracking-wide uppercase">
+                    <h3 className="text-lg sm:text-2xl md:text-3xl 2xl:text-4xl font-light text-white tracking-wide uppercase">
                       WHICH ONE WINS? <span className="text-[#F2A541] font-normal">→ ARIMA (1,1,0)!</span>
                     </h3>
-                    <p className="text-xs sm:text-sm font-mono text-slate-300">
+                    <p className="text-xs sm:text-sm md:text-base 2xl:text-xl font-mono text-slate-200">
                       So, what should port management do with these findings?
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-xs font-mono font-semibold text-sky-400 px-3 py-1.5 rounded-xl bg-sky-950/60 border border-sky-400/40">
+                  <div className="flex items-center gap-2 text-xs sm:text-sm 2xl:text-base font-mono font-semibold text-sky-400 px-3 py-1.5 2xl:px-4 2xl:py-2 rounded-xl bg-sky-950/60 border border-sky-400/40">
                     <span>NEXT → BEAT 6: OPERATIONS RECOMMENDATION</span>
-                    <ArrowRight className="w-4 h-4 animate-pulse" />
+                    <ArrowRight className="w-4 h-4 2xl:w-5 2xl:h-5 animate-pulse" />
                   </div>
                 </motion.div>
               )}
@@ -3033,16 +3149,16 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 exit={{ opacity: 0 }}
                 className="text-center z-10 flex flex-col items-center gap-4"
               >
-                <div className="text-xs font-mono uppercase tracking-[0.3em] text-[#F2A541]">
+                <div className="text-xs sm:text-sm 2xl:text-base font-mono uppercase tracking-[0.3em] text-[#F2A541]">
                   Operational Management Action
                 </div>
-                <h1 className="text-5xl md:text-8xl font-extralight text-white tracking-tight">
+                <h1 className="text-5xl md:text-8xl 2xl:text-9xl font-extralight text-white tracking-tight">
                   USE ARIMA
                 </h1>
-                <div className="text-2xl md:text-4xl font-mono text-[#F2A541]">
+                <div className="text-2xl md:text-4xl 2xl:text-6xl font-mono text-[#F2A541]">
                   (1, 1, 0)
                 </div>
-                <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400 mt-2">
+                <div className="text-xs sm:text-sm 2xl:text-lg font-mono uppercase tracking-[0.2em] text-slate-400 mt-2">
                   ROLL FORWARD MONTHLY
                 </div>
               </motion.div>
@@ -3055,37 +3171,37 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 animate={{ opacity: 1, scale: 1.0 }}
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.7 }}
-                className="text-center z-10 flex flex-col items-center gap-6 w-full max-w-4xl px-4"
+                className={`text-center z-10 flex flex-col items-center gap-6 w-full ${isTVMode ? 'max-w-6xl 2xl:max-w-7xl' : 'max-w-4xl'} px-4`}
               >
                 <div className="text-center">
-                  <div className="text-xs font-mono uppercase tracking-[0.3em] text-[#F2A541] mb-2">
+                  <div className="text-xs sm:text-sm 2xl:text-base font-mono uppercase tracking-[0.3em] text-[#F2A541] mb-2">
                     THREE PILLARS
                   </div>
-                  <h2 className="text-4xl md:text-7xl font-extralight text-white tracking-tight uppercase">
+                  <h2 className="text-4xl md:text-7xl 2xl:text-8xl font-extralight text-white tracking-tight uppercase">
                     CAPACITY COMMITMENT
                   </h2>
                 </div>
 
                 {/* Minimalist 3-Pillar Phrase Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full mt-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 2xl:gap-6 w-full mt-2">
                   {/* Pillar 1: Floor */}
                   <motion.div
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6, delay: 0.1 }}
-                    className={`py-8 px-6 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
+                    className={`py-8 2xl:py-12 px-6 2xl:px-8 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
                       beatElapsedSeconds >= 14 && beatElapsedSeconds < 17
                         ? 'bg-[#0B2545]/90 border-sky-400 shadow-[0_0_30px_rgba(56,189,248,0.35)] ring-1 ring-sky-400'
                         : 'bg-slate-950/70 border-slate-800'
                     }`}
                   >
-                    <div className="text-xs font-mono text-sky-400 uppercase tracking-widest font-bold">
+                    <div className="text-xs 2xl:text-sm font-mono text-sky-400 uppercase tracking-widest font-bold">
                       01 · FLOOR
                     </div>
-                    <div className="text-2xl md:text-3xl font-light text-white tracking-wide">
+                    <div className="text-2xl md:text-3xl 2xl:text-4xl font-light text-white tracking-wide">
                       ARIMA (1,1,0)
                     </div>
-                    <div className="text-xs font-mono text-slate-400 uppercase tracking-wider">
+                    <div className="text-xs 2xl:text-sm font-mono text-slate-400 uppercase tracking-wider">
                       POINT BASELINE
                     </div>
                   </motion.div>
@@ -3095,19 +3211,19 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6, delay: 0.25 }}
-                    className={`py-8 px-6 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
+                    className={`py-8 2xl:py-12 px-6 2xl:px-8 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
                       beatElapsedSeconds >= 17 && beatElapsedSeconds < 20.5
                         ? 'bg-[#0B2545]/90 border-amber-400 shadow-[0_0_30px_rgba(242,165,65,0.4)] ring-1 ring-amber-400'
                         : 'bg-slate-950/70 border-slate-800'
                     }`}
                   >
-                    <div className="text-xs font-mono text-[#F2A541] uppercase tracking-widest font-bold">
+                    <div className="text-xs 2xl:text-sm font-mono text-[#F2A541] uppercase tracking-widest font-bold">
                       02 · BUFFER
                     </div>
-                    <div className="text-2xl md:text-3xl font-light text-[#F2A541] tracking-wide">
+                    <div className="text-2xl md:text-3xl 2xl:text-4xl font-light text-[#F2A541] tracking-wide">
                       +5%
                     </div>
-                    <div className="text-xs font-mono text-slate-400 uppercase tracking-wider">
+                    <div className="text-xs 2xl:text-sm font-mono text-slate-400 uppercase tracking-wider">
                       FLEX CAPACITY
                     </div>
                   </motion.div>
@@ -3117,19 +3233,19 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6, delay: 0.4 }}
-                    className={`py-8 px-6 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
+                    className={`py-8 2xl:py-12 px-6 2xl:px-8 rounded-2xl border text-center flex flex-col items-center justify-center gap-3 transition-all backdrop-blur-md relative overflow-hidden ${
                       beatElapsedSeconds >= 20.5
                         ? 'bg-[#0B2545]/90 border-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.35)] ring-1 ring-emerald-400'
                         : 'bg-slate-950/70 border-slate-800'
                     }`}
                   >
-                    <div className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">
+                    <div className="text-xs 2xl:text-sm font-mono text-emerald-400 uppercase tracking-widest font-bold">
                       03 · OVERSIGHT
                     </div>
-                    <div className="text-2xl md:text-3xl font-light text-white tracking-wide">
+                    <div className="text-2xl md:text-3xl 2xl:text-4xl font-light text-white tracking-wide">
                       HUMAN SIGN-OFF
                     </div>
-                    <div className="text-xs font-mono text-slate-400 uppercase tracking-wider">
+                    <div className="text-xs 2xl:text-sm font-mono text-slate-400 uppercase tracking-wider">
                       ETS BACKUP
                     </div>
                   </motion.div>
@@ -3159,19 +3275,19 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   initial={{ opacity: 0, scale: 0.92, y: 12 }}
                   animate={{ opacity: 1, scale: 1.0, y: 0 }}
                   transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-                  className="relative z-20 w-full max-w-3xl mx-auto flex flex-col items-center gap-5 bg-slate-950/95 p-6 sm:p-10 md:p-12 rounded-3xl border-2 border-amber-500/70 shadow-[0_0_60px_rgba(242,165,65,0.35)] backdrop-blur-2xl text-center"
+                  className={`relative z-20 w-full ${isTVMode ? 'max-w-4xl 2xl:max-w-5xl p-8 sm:p-12 2xl:p-16' : 'max-w-3xl p-6 sm:p-10 md:p-12'} mx-auto flex flex-col items-center gap-5 bg-slate-950/95 rounded-3xl border-2 border-amber-500/70 shadow-[0_0_60px_rgba(242,165,65,0.35)] backdrop-blur-2xl text-center`}
                 >
-                  <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-amber-500/20 border border-amber-400/60 text-amber-300 text-xs sm:text-sm font-mono font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(242,165,65,0.3)]">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#F2A541] animate-ping" />
+                  <div className="inline-flex items-center gap-2.5 px-4 py-1.5 2xl:px-5 2xl:py-2 rounded-full bg-amber-500/20 border border-amber-400/60 text-amber-300 text-xs sm:text-sm 2xl:text-base font-mono font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(242,165,65,0.3)]">
+                    <span className="w-2.5 h-2.5 2xl:w-3 2xl:h-3 rounded-full bg-[#F2A541] animate-ping" />
                     <span>Industrial Engineering Final Verdict</span>
                   </div>
-                  <h2 className="text-3xl sm:text-5xl md:text-6xl font-light text-white tracking-wide drop-shadow-[0_0_25px_rgba(255,255,255,0.4)]">
+                  <h2 className="text-3xl sm:text-5xl md:text-6xl 2xl:text-7xl font-light text-white tracking-wide drop-shadow-[0_0_25px_rgba(255,255,255,0.4)]">
                     USE ARIMA (1, 1, 0)
                   </h2>
-                  <div className="text-sm sm:text-lg md:text-xl font-mono text-[#F2A541] font-bold tracking-widest uppercase drop-shadow-[0_0_12px_rgba(242,165,65,0.7)] px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                  <div className="text-sm sm:text-lg md:text-xl 2xl:text-2xl font-mono text-[#F2A541] font-bold tracking-widest uppercase drop-shadow-[0_0_12px_rgba(242,165,65,0.7)] px-4 py-2 2xl:px-6 2xl:py-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
                     +5% FLEXIBLE BUFFER · REVALIDATE QUARTERLY
                   </div>
-                  <div className="text-xs sm:text-sm md:text-base font-mono text-slate-300 tracking-wider">
+                  <div className="text-xs sm:text-sm md:text-base 2xl:text-xl font-mono text-slate-300 tracking-wider">
                     ETS α = 0.50 SPREADSHEET AUDIT BACKUP · HUMAN CHIEF OVERRIDE
                   </div>
                 </motion.div>
@@ -3186,37 +3302,37 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                 transition={{ duration: 1.2 }}
                 className="absolute inset-0 bg-[#060B14] flex flex-col items-center justify-center gap-4 z-20 text-center px-6"
               >
-                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-mono font-bold uppercase tracking-widest">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 2xl:px-5 2xl:py-2 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs sm:text-sm 2xl:text-base font-mono font-bold uppercase tracking-widest">
                   <span>APPLIED STUDY 1</span>
                 </div>
 
-                <div className="text-xl sm:text-3xl md:text-5xl font-extralight tracking-[0.2em] uppercase text-white">
+                <div className="text-xl sm:text-3xl md:text-5xl 2xl:text-6xl font-extralight tracking-[0.2em] uppercase text-white">
                   BSIE 3-E · GROUP 7
                 </div>
 
                 {/* 3 Student Presenters Lineup */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl my-1">
-                  <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                    <div className="text-xs font-bold text-white">Elaiza Jane Aligato</div>
-                    <div className="text-[10px] font-mono text-sky-400">Speaker 1</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 2xl:gap-5 w-full max-w-2xl 2xl:max-w-3xl my-1">
+                  <div className="p-3 2xl:p-5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                    <div className="text-xs sm:text-sm 2xl:text-base font-bold text-white">Elaiza Jane Aligato</div>
+                    <div className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-sky-400">Speaker 1</div>
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                    <div className="text-xs font-bold text-white">Rash Mae Crystelle C. Ansay</div>
-                    <div className="text-[10px] font-mono text-[#F2A541]">Speaker 2</div>
+                  <div className="p-3 2xl:p-5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                    <div className="text-xs sm:text-sm 2xl:text-base font-bold text-white">Rash Mae Crystelle C. Ansay</div>
+                    <div className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-[#F2A541]">Speaker 2</div>
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                    <div className="text-xs font-bold text-white">Mylene Joy Villagracia</div>
-                    <div className="text-[10px] font-mono text-emerald-400">Speaker 3</div>
+                  <div className="p-3 2xl:p-5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                    <div className="text-xs sm:text-sm 2xl:text-base font-bold text-white">Mylene Joy Villagracia</div>
+                    <div className="text-[10px] sm:text-xs 2xl:text-sm font-mono text-emerald-400">Speaker 3</div>
                   </div>
                 </div>
 
-                <div className="text-xs sm:text-sm font-mono text-slate-400 tracking-wider">
+                <div className="text-xs sm:text-sm 2xl:text-base font-mono text-slate-400 tracking-wider">
                   IE-PC 3112: Operations Management 1 · Dataset D10: Port of Los Angeles
                 </div>
-                <div className="text-xs text-sky-400 font-mono font-semibold">
+                <div className="text-xs sm:text-sm 2xl:text-base text-sky-400 font-mono font-semibold">
                   Cebu Technological University – Main Campus
                 </div>
-                <p className="text-xs font-serif italic text-slate-400 max-w-md">
+                <p className="text-xs sm:text-sm 2xl:text-base font-serif italic text-slate-400 max-w-md">
                   Thank you for watching.
                 </p>
               </motion.div>
@@ -3315,8 +3431,21 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                   <span className="text-white truncate max-w-sm">{currentBeat.title}</span>
                 </div>
 
-                {/* Right: Fullscreen & Presenter Notes */}
+                {/* Right: Fullscreen, TV Mode & Presenter Notes */}
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleTVMode}
+                    className={`px-2.5 py-1 rounded text-[11px] font-mono transition-all flex items-center gap-1.5 ${
+                      isTVMode
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-[0_0_12px_rgba(242,165,65,0.7)]'
+                        : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400'
+                    }`}
+                    title="Toggle TV / Large Screen Presentation Mode (T)"
+                  >
+                    <Tv className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">TV Mode</span>
+                  </button>
+
                   <button
                     onClick={() => setShowPresenterHUD(!showPresenterHUD)}
                     className={`px-2.5 py-1 rounded text-[11px] font-mono transition-all flex items-center gap-1.5 ${
@@ -3326,7 +3455,7 @@ export const VideoPresentationPlayer: React.FC<VideoPresentationPlayerProps> = (
                     }`}
                   >
                     <Mic className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Presenter Teleprompter</span>
+                    <span className="hidden sm:inline">Teleprompter</span>
                   </button>
 
                   <button

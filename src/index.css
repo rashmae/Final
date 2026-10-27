@@ -772,6 +772,40 @@
   z-index: 30;
 }
 
+/* ───────────────────────── TV & BIG SCREEN PRESENTATION STAGE UTILITIES ───────────────────────── */
+/* Optimizes viewing from 6 to 15+ feet away on 1080p, 1440p, and 4K TV displays */
+.stage-tv-mode {
+  --tv-font-scale: 1.25;
+}
+
+.stage-tv-mode .tv-stage-container {
+  max-width: 96vw !important;
+  width: 96vw !important;
+}
+
+.stage-tv-mode .tv-stage-height {
+  height: 84vh !important;
+  max-height: 85vh !important;
+}
+
+/* Custom scrollbar for mobile phone setup to ensure clean accessibility */
+.phone-scrollable {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.4) transparent;
+}
+
+.phone-scrollable::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.phone-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.35);
+  border-radius: 9999px;
+}
+
+
 
 
 
